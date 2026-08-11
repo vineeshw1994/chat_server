@@ -56,7 +56,11 @@ export const searchUsers = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: {
-      users: users.map((u) => u.toSafeObject()),
+      users: users.map((u) => {
+        const safe = u.toSafeObject();
+        const uid = safe.id || safe._id;
+        return { ...safe, id: uid, _id: uid };
+      }),
     },
   });
 });

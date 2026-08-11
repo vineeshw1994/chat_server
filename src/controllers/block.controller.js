@@ -6,6 +6,7 @@ import AppError from '../utils/AppError.js';
 
 export const blockUser = asyncHandler(async (req, res) => {
   const { userId } = req.body;
+  if (!userId) throw new AppError('User ID is required', 400);
   if (String(userId) === String(req.user._id)) {
     throw new AppError('Cannot block yourself', 400);
   }

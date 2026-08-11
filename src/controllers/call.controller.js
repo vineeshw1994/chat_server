@@ -18,6 +18,7 @@ const isCallParticipant = (call, userId) =>
 
 export const initiateCall = asyncHandler(async (req, res) => {
   const { receiverId, type = 'audio', chatId = null } = req.body;
+  if (!receiverId) throw new AppError('Receiver ID is required', 400);
   if (!['audio', 'video'].includes(type)) throw new AppError('Invalid call type', 400);
 
   const friendship = await Friendship.findOne({

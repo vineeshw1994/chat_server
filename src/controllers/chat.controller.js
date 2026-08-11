@@ -50,6 +50,7 @@ export const getChats = asyncHandler(async (req, res) => {
 
 export const getOrCreatePrivateChat = asyncHandler(async (req, res) => {
   const { userId } = req.body;
+  if (!userId) throw new AppError('User ID is required', 400);
 
   const friendship = await Friendship.findOne({
     users: { $all: [req.user._id, userId] },

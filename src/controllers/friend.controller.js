@@ -8,6 +8,9 @@ import AppError from '../utils/AppError.js';
 
 export const sendFriendRequest = asyncHandler(async (req, res) => {
   const { userId } = req.body;
+  if (!userId) {
+    throw new AppError('User ID is required', 400);
+  }
   if (String(userId) === String(req.user._id)) {
     throw new AppError('Cannot send request to yourself', 400);
   }
@@ -119,7 +122,10 @@ export const getFriends = asyncHandler(async (req, res) => {
 
   const friends = friendships.map((f) => {
     const other = f.users.find((u) => String(u._id) !== String(req.user._id));
-    return other?.toSafeObject?.() || other;
+    const safe = other?.toSafeObject?.() || other;
+    if (!safe) return null;
+    const uid = safe.id || safe._id;
+    return { ...safe, id: uid, _id: uid };
   }).filter(Boolean);
 
   res.json({ success: true, data: { friends } });

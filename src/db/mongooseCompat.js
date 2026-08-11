@@ -21,7 +21,16 @@ const wrapDoc = (instance, ModelClass) => {
 
   doc.toObject = function toObject() {
     const o = { ...this.get({ plain: true }) };
-    o._id = o.id;
+    o._id = o.id ?? o._id;
+    if (o.id == null && o._id != null) o.id = o._id;
+    return o;
+  };
+
+  const origToJSON = doc.toJSON?.bind(doc);
+  doc.toJSON = function toJSON() {
+    const o = origToJSON ? origToJSON() : this.get({ plain: true });
+    o._id = o.id ?? o._id;
+    if (o.id == null && o._id != null) o.id = o._id;
     return o;
   };
 
@@ -33,7 +42,9 @@ const parseSelect = (sel) => {
   if (!sel) return undefined;
   if (typeof sel === 'string') {
     if (sel.startsWith('+')) return { includePassword: sel.slice(1) };
-    return sel.split(/\s+/).filter(Boolean).map((f) => (f === '_id' ? 'id' : f));
+    const fields = sel.split(/\s+/).filter(Boolean).map((f) => (f === '_id' ? 'id' : f));
+    if (!fields.includes('id')) fields.unshift('id');
+    return fields;
   }
   return undefined;
 };
@@ -139,6 +150,8 @@ const buildWhere = (query, opts = {}) => {
       parts.push({ [key]: val.toLowerCase() });
       continue;
     }
+
+    if (val === undefined || val === null) continue;
 
     parts.push({ [key]: val });
   }
@@ -410,9 +423,7 @@ export const createCompatModel = (sequelizeModel, config = {}) => {
       if (!cfg) return;
 
       const select = pop.select || pop.populate?.select;
-      const attrs = select
-        ? select.split(/\s+/).map((f) => (f === '_id' ? 'id' : f))
-        : undefined;
+      const attrs = select ? parseSelect(select) : undefined;
 
       if (cfg.type === 'array') {
         const ids = doc.get(path) || [];
@@ -643,9 +654,10 @@ export const initModels = () => {
   };
 
   UserSequelize.prototype.toSafeObject = function toSafeObject() {
+    const uid = this.id ?? this.getDataValue?.('id');
     return {
-      id: this.id,
-      _id: this.id,
+      id: uid,
+      _id: uid,
       name: this.name,
       username: this.username,
       email: this.email,
