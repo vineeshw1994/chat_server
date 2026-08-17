@@ -1,5 +1,6 @@
 import Call from '../models/Call.js';
 import { createNotification } from './notification.service.js';
+import { createCallLogMessage } from './callLog.service.js';
 
 const ringTimers = new Map();
 const RING_TIMEOUT_MS = 45000;
@@ -32,6 +33,7 @@ export const scheduleMissedCall = (callId, io) => {
       await call.save();
 
       const populated = await populateCall(callId);
+      await createCallLogMessage(populated, io);
 
       for (const uid of [call.caller, call.receiver]) {
         await createNotification({

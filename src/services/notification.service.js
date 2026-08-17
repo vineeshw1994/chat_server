@@ -18,17 +18,20 @@ export const createNotification = async ({
     data,
   });
 
-  const populated = await Notification.findById(notification._id)
-    .populate('sender', 'name username profilePicture')
-    .lean();
+  const populated = await Notification.findById(notification._id).populate(
+    'sender',
+    'name username profilePicture'
+  );
+
+  const plain = populated?.toObject?.() ?? populated?.toJSON?.() ?? populated;
 
   // Always emit only to the recipient's private room (never broadcast globally)
   if (io && recipient) {
     io.to(`user:${String(recipient)}`).emit('notification:new', {
-      ...populated,
+      ...plain,
       recipient: String(recipient),
     });
   }
 
-  return populated;
+  return plain;
 };

@@ -198,7 +198,10 @@ export const sendMessage = asyncHandler(async (req, res) => {
     fileSize,
     mimeType,
     isVoiceNote: type === 'voice',
-    replyTo: req.body.replyTo || null,
+    replyTo:
+      req.body.replyTo && req.body.replyTo !== 'undefined' && req.body.replyTo !== 'null'
+        ? req.body.replyTo
+        : null,
     forwardedFrom: req.body.forwardedFrom || null,
     status: 'sent',
     deliveredTo: [],

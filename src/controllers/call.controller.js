@@ -7,6 +7,7 @@ import {
   populateCall,
   scheduleMissedCall,
 } from '../services/callRing.service.js';
+import { createCallLogMessage } from '../services/callLog.service.js';
 import { getOnlineUsers } from '../socket/index.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
@@ -140,6 +141,8 @@ export const updateCallStatus = asyncHandler(async (req, res) => {
     throw new AppError('Not allowed', 403);
   }
 
+  const previousStatus = call.status;
+
   if (['accepted', 'rejected', 'ended', 'missed'].includes(status)) {
     clearRingTimer(call._id);
   }
@@ -156,6 +159,13 @@ export const updateCallStatus = asyncHandler(async (req, res) => {
 
   const populated = await populateCall(call._id);
   const io = req.app.get('io');
+
+  if (
+    ['ended', 'rejected', 'missed'].includes(status) &&
+    !['ended', 'rejected', 'missed'].includes(previousStatus)
+  ) {
+    await createCallLogMessage(populated, io);
+  }
 
   for (const pid of call.participants) {
     io?.to(`user:${pid}`).emit('call:status', populated);

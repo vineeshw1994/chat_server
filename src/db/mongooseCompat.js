@@ -174,6 +174,7 @@ class QueryBuilder {
     this._limit = null;
     this._select = null;
     this._populates = [];
+    this._includePassword = false;
   }
 
   sort(s) {
@@ -224,7 +225,7 @@ class QueryBuilder {
     let attributes;
     let includePassword = false;
 
-    if (sel?.includePassword) {
+    if (sel?.includePassword || this._includePassword) {
       includePassword = true;
       attributes = undefined;
     } else if (Array.isArray(sel)) {
@@ -422,7 +423,7 @@ export const createCompatModel = (sequelizeModel, config = {}) => {
       const cfg = this._populateConfig[path];
       if (!cfg) return;
 
-      const select = pop.select || pop.populate?.select;
+      const select = pop.select;
       const attrs = select ? parseSelect(select) : undefined;
 
       if (cfg.type === 'array') {
@@ -443,7 +444,13 @@ export const createCompatModel = (sequelizeModel, config = {}) => {
         doc.setDataValue(path, wrapDoc(related, cfg.compatModel));
 
         if (pop.populate) {
-          await this._applyPopulate(doc.get(path), pop.populate);
+          const nestedDoc = doc.get(path);
+          const nestedModel = cfg.compatModel || this;
+          const nestedPop =
+            typeof pop.populate === 'object' && pop.populate.path
+              ? pop.populate
+              : { path: pop.populate };
+          await nestedModel._applyPopulate(nestedDoc, nestedPop);
         }
       }
     }
@@ -650,6 +657,7 @@ export const initModels = () => {
 
   // User instance methods
   UserSequelize.prototype.comparePassword = async function comparePassword(candidate) {
+    if (!candidate || !this.password) return false;
     return bcrypt.compare(candidate, this.password);
   };
 
@@ -799,20 +807,19 @@ export const initModels = () => {
     CompatModel._wrapInstance = (doc) => {
       if (origWrap) origWrap(doc);
       doc.save = async function save() {
-        const plain = this.get({ plain: true });
         if (beforeSave) beforeSave(this);
-        // sync json map fields
         if (CompatModel._jsonMapFields) {
           for (const f of CompatModel._jsonMapFields) {
             const v = this.getDataValue(f);
-            if (v instanceof Map) plain[f] = Object.fromEntries(v);
+            if (v instanceof Map) this.setDataValue(f, Object.fromEntries(v));
           }
         }
-        await SequelizeModel.update(plain, { where: { id: plain.id } });
-        return wrapDoc(await SequelizeModel.findByPk(plain.id), CompatModel);
+        await SequelizeModel.prototype.save.call(this);
+        return wrapDoc(await SequelizeModel.findByPk(this.id), CompatModel);
       };
       doc.populate = async function populate(path, select) {
-        await CompatModel._applyPopulate(this, { path, select });
+        const pop = typeof path === 'object' && path.path ? path : { path, select };
+        await CompatModel._applyPopulate(this, pop);
         return this;
       };
     };
@@ -829,48 +836,24 @@ export const initModels = () => {
   addSave(FriendRequestSequelize, FriendRequest);
   addSave(CallSequelize, Call);
 
-  // User findOne with +password
-  const origUserFindOne = User.findOne.bind(User);
-  User.findOne = (filter) => {
-    const qb = origUserFindOne(filter);
+  // User findOne/findById with +password
+  const patchPasswordSelect = (qb) => {
     const origSelect = qb.select.bind(qb);
     qb.select = (s) => {
-      origSelect(s);
-      qb._includePassword = s?.startsWith?.('+');
-      return qb;
-    };
-    const origRun = qb._run.bind(qb);
-    qb._run = async function () {
-      if (this._includePassword) this._select = null;
-      return origRun();
+      if (typeof s === 'string' && s.startsWith('+')) {
+        qb._includePassword = true;
+        return qb;
+      }
+      return origSelect(s);
     };
     return qb;
   };
+
+  const origUserFindOne = User.findOne.bind(User);
+  User.findOne = (filter) => patchPasswordSelect(origUserFindOne(filter));
 
   const origUserFindById = User.findById.bind(User);
-  User.findById = (id) => {
-    const qb = origUserFindById(id);
-    const origSelect = qb.select.bind(qb);
-    qb.select = (s) => {
-      origSelect(s);
-      qb._includePassword = s?.startsWith?.('+');
-      return qb;
-    };
-    const origRun = qb._run.bind(qb);
-    qb._run = async function () {
-      if (this._includePassword) this._select = null;
-      return origRun();
-    };
-    return qb;
-  };
-
-  // Notification lean() support
-  const origNotifFindById = Notification.findById.bind(Notification);
-  Notification.findById = (id) => {
-    const qb = origNotifFindById(id);
-    qb.lean = () => qb;
-    return qb;
-  };
+  User.findById = (id) => patchPasswordSelect(origUserFindById(id));
 
   return {
     sequelize,
