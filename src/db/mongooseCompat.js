@@ -477,6 +477,10 @@ export const initModels = () => {
       isOnline: { type: DataTypes.BOOLEAN, defaultValue: false },
       lastSeen: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
       isVerified: { type: DataTypes.BOOLEAN, defaultValue: false },
+      role: { type: DataTypes.ENUM('user', 'admin', 'staff'), defaultValue: 'user' },
+      status: { type: DataTypes.ENUM('active', 'banned'), defaultValue: 'active' },
+      permissions: { type: DataTypes.JSON, defaultValue: {} },
+      deletedAt: { type: DataTypes.DATE, allowNull: true },
       socketId: { type: DataTypes.STRING(100), allowNull: true },
       settings: {
         type: DataTypes.JSON,
@@ -551,6 +555,7 @@ export const initModels = () => {
       edited: { type: DataTypes.BOOLEAN, defaultValue: false },
       editedAt: { type: DataTypes.DATE, allowNull: true },
       reactions: { type: DataTypes.JSON, defaultValue: [] },
+      mentions: { type: DataTypes.JSON, defaultValue: [] },
     },
     { tableName: 'messages' }
   );
@@ -675,6 +680,11 @@ export const initModels = () => {
       statusMessage: this.statusMessage,
       isOnline: this.isOnline,
       lastSeen: this.lastSeen,
+      isVerified: this.isVerified,
+      role: this.role || 'user',
+      status: this.status || 'active',
+      permissions: this.permissions || {},
+      deletedAt: this.deletedAt || null,
       settings: this.settings || {},
       createdAt: this.createdAt,
     };
@@ -728,7 +738,7 @@ export const initModels = () => {
 
   Message = createCompatModel(MessageSequelize, {
     name: 'Message',
-    jsonArrayFields: ['deliveredTo', 'seenBy', 'deletedFor'],
+    jsonArrayFields: ['deliveredTo', 'seenBy', 'deletedFor', 'mentions'],
     populateConfig: {
       sender: { type: 'ref', model: UserSequelize, compatModel: User },
       replyTo: { type: 'ref', model: MessageSequelize, compatModel: null },

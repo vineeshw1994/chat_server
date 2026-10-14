@@ -7,6 +7,7 @@ import chatRoutes from './chat.routes.js';
 import groupRoutes from './group.routes.js';
 import callRoutes from './call.routes.js';
 import notificationRoutes from './notification.routes.js';
+import adminRoutes from './admin.routes.js';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/chats', chatRoutes);
 router.use('/groups', groupRoutes);
 router.use('/calls', callRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/admin', adminRoutes);
 
 export default router;

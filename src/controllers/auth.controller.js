@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import { signToken, generateUsername } from '../helpers/token.js';
 import { createAndSendOTP, verifyOTPCode } from '../services/otp.service.js';
+import { promoteIfAdminEmail } from '../helpers/admin.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 
@@ -58,6 +59,7 @@ export const verifySignupOTP = asyncHandler(async (req, res) => {
   if (!user) throw new AppError('User not found', 404);
 
   user.isVerified = true;
+  await promoteIfAdminEmail(user);
   await user.save();
 
   const token = signToken(user._id);
@@ -93,6 +95,14 @@ export const login = asyncHandler(async (req, res) => {
     throw new AppError('Invalid email or password', 401);
   }
 
+  if (user.deletedAt) {
+    throw new AppError('This account has been deleted. Contact support.', 403);
+  }
+
+  if (user.status === 'banned') {
+    throw new AppError('Your account has been suspended. Contact support.', 403);
+  }
+
   if (!user.isVerified) {
     const otpResult = await createAndSendOTP(email, 'signup');
     return res.status(403).json({
@@ -105,6 +115,8 @@ export const login = asyncHandler(async (req, res) => {
       },
     });
   }
+
+  await promoteIfAdminEmail(user);
 
   const token = signToken(user._id);
   setAuthCookie(res, token);
@@ -144,6 +156,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
 });
 
 export const me = asyncHandler(async (req, res) => {
+  await promoteIfAdminEmail(req.user);
   res.json({ success: true, data: { user: req.user.toSafeObject() } });
 });
 

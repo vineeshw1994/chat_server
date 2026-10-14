@@ -43,6 +43,8 @@ const config = {
     Number(process.env.UPLOAD_MAX_SIZE) || 50 * 1024 * 1024,
 
   otpExpiryMinutes: 5,
+
+  adminEmail: (process.env.ADMIN_EMAIL || '').toLowerCase().trim(),
 };
 
 export default config;

@@ -4,18 +4,31 @@ import Chat from '../models/Chat.js';
 import Friendship from '../models/Friendship.js';
 import Message from '../models/Message.js';
 import { createNotification } from '../services/notification.service.js';
+import { setUnread } from '../helpers/unread.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 
 const getMembership = async (groupId, userId) =>
   GroupMember.findOne({ group: groupId, user: userId });
 
+const parseIdList = (value) => {
+  if (Array.isArray(value)) return value.map(String);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+};
+
 export const createGroup = asyncHandler(async (req, res) => {
   const { name, description = '', memberIds = [] } = req.body;
   if (!name?.trim()) throw new AppError('Group name is required', 400);
 
-  let members = Array.isArray(memberIds) ? memberIds : JSON.parse(memberIds || '[]');
-  members = [...new Set(members.map(String))].filter((id) => id !== String(req.user._id));
+  let members = parseIdList(memberIds);
+  members = [...new Set(members)].filter((id) => id !== String(req.user._id));
+  const adminIds = new Set(parseIdList(req.body.adminIds).filter((id) => members.includes(id)));
 
   for (const memberId of members) {
     const friendship = await Friendship.findOne({
@@ -49,7 +62,11 @@ export const createGroup = asyncHandler(async (req, res) => {
 
   await GroupMember.create({ group: group._id, user: req.user._id, role: 'owner' });
   await GroupMember.insertMany(
-    members.map((userId) => ({ group: group._id, user: userId, role: 'member' }))
+    members.map((userId) => ({
+      group: group._id,
+      user: userId,
+      role: adminIds.has(String(userId)) ? 'admin' : 'member',
+    }))
   );
 
   await Message.create({
@@ -141,7 +158,7 @@ export const addMembers = asyncHandler(async (req, res) => {
     await GroupMember.create({ group: group._id, user: userId, role: 'member' });
     if (!chat.participants.some((p) => String(p) === String(userId))) {
       chat.participants.push(userId);
-      chat.unreadCounts.set(String(userId), 0);
+      setUnread(chat, userId, 0);
     }
 
     await createNotification({
@@ -167,9 +184,9 @@ export const removeMember = asyncHandler(async (req, res) => {
 
   const target = await getMembership(req.params.id, req.params.userId);
   if (!target) throw new AppError('Member not found', 404);
-  if (target.role === 'owner') throw new AppError('Cannot remove owner', 400);
-  if (membership.role === 'admin' && target.role === 'admin') {
-    throw new AppError('Admins cannot remove other admins', 403);
+  if (target.role === 'owner') throw new AppError('Cannot remove the group owner', 400);
+  if (target.role === 'admin') {
+    throw new AppError('Cannot remove group admins', 403);
   }
 
   await GroupMember.deleteOne({ _id: target._id });
@@ -183,8 +200,8 @@ export const removeMember = asyncHandler(async (req, res) => {
 
 export const changeRole = asyncHandler(async (req, res) => {
   const membership = await getMembership(req.params.id, req.user._id);
-  if (!membership || membership.role !== 'owner') {
-    throw new AppError('Only owner can change roles', 403);
+  if (!membership || !['owner', 'admin'].includes(membership.role)) {
+    throw new AppError('Only group admins can change roles', 403);
   }
 
   const { role } = req.body;
@@ -193,10 +210,18 @@ export const changeRole = asyncHandler(async (req, res) => {
   const target = await getMembership(req.params.id, req.params.userId);
   if (!target || target.role === 'owner') throw new AppError('Invalid member', 400);
 
+  if (role === 'member' && target.role === 'admin' && membership.role !== 'owner') {
+    throw new AppError('Only the group owner can demote admins', 403);
+  }
+
   target.role = role;
   await target.save();
 
-  res.json({ success: true, message: `Member ${role === 'admin' ? 'promoted' : 'demoted'}`, data: { member: target } });
+  res.json({
+    success: true,
+    message: role === 'admin' ? 'Member is now a group admin' : 'Admin demoted to member',
+    data: { member: target },
+  });
 });
 
 export const leaveGroup = asyncHandler(async (req, res) => {

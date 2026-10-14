@@ -5,6 +5,7 @@ import GroupMember from '../models/GroupMember.js';
 import { isBlockedEitherWay } from '../helpers/block.js';
 import { createNotification } from '../services/notification.service.js';
 import { getOnlineUsers } from '../socket/index.js';
+import { bumpUnread, getUnread, setUnread } from '../helpers/unread.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 
@@ -35,7 +36,7 @@ export const getChats = asyncHandler(async (req, res) => {
 
   const result = chats.map((chat) => {
     const obj = chat.toObject();
-    obj.unreadCount = chat.unreadCounts?.get?.(String(req.user._id)) || 0;
+    obj.unreadCount = getUnread(chat, req.user._id);
     obj.isPinned = chat.pinnedBy?.some((id) => String(id) === String(req.user._id));
     if (chat.type === 'private') {
       obj.otherUser = chat.participants.find((p) => String(p._id) !== String(req.user._id));
@@ -79,7 +80,7 @@ export const getOrCreatePrivateChat = asyncHandler(async (req, res) => {
   chat = await populateChat(Chat.findById(chat._id));
   const obj = chat.toObject();
   obj.otherUser = chat.participants.find((p) => String(p._id) !== String(req.user._id));
-  obj.unreadCount = chat.unreadCounts?.get?.(String(req.user._id)) || 0;
+  obj.unreadCount = getUnread(chat, req.user._id);
 
   res.json({ success: true, data: { chat: obj } });
 });
@@ -188,6 +189,18 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('Message content or file is required', 400);
   }
 
+  let mentionIds = [];
+  try {
+    mentionIds = Array.isArray(req.body.mentionIds)
+      ? req.body.mentionIds
+      : JSON.parse(req.body.mentionIds || '[]');
+  } catch {
+    mentionIds = [];
+  }
+  mentionIds = [...new Set(mentionIds.map(String))].filter((id) =>
+    chat.participants.some((p) => String(p) === id || String(p?._id) === id)
+  );
+
   const message = await Message.create({
     chat: chat._id,
     sender: req.user._id,
@@ -198,6 +211,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     fileSize,
     mimeType,
     isVoiceNote: type === 'voice',
+    mentions: mentionIds,
     replyTo:
       req.body.replyTo && req.body.replyTo !== 'undefined' && req.body.replyTo !== 'null'
         ? req.body.replyTo
@@ -224,8 +238,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
   for (const participantId of chat.participants) {
     const key = String(participantId);
     if (key !== String(req.user._id)) {
-      const current = chat.unreadCounts.get(key) || 0;
-      chat.unreadCounts.set(key, current + 1);
+      bumpUnread(chat, key);
     }
   }
   await chat.save();
@@ -254,16 +267,17 @@ export const sendMessage = asyncHandler(async (req, res) => {
         chatId: chat._id,
         lastMessage: populated,
         lastMessageAt: chat.lastMessageAt,
-        unreadCount: chat.unreadCounts.get(String(participantId)) || 0,
+        unreadCount: getUnread(chat, participantId),
       });
 
+      const mentioned = mentionIds.includes(String(participantId));
       await createNotification({
         recipient: participantId,
         sender: req.user._id,
         type: 'new_message',
-        title: req.user.name,
+        title: mentioned ? `${req.user.name} mentioned you` : req.user.name,
         body: type === 'text' ? (req.body.content || '').slice(0, 80) : `Sent a ${type}`,
-        data: { chatId: chat._id, messageId: message._id },
+        data: { chatId: chat._id, messageId: message._id, mentioned },
         io,
       });
     }
@@ -360,7 +374,7 @@ export const markSeen = asyncHandler(async (req, res) => {
     }
   );
 
-  chat.unreadCounts.set(String(req.user._id), 0);
+  setUnread(chat, req.user._id, 0);
   await chat.save();
 
   req.app.get('io')?.to(`chat:${chat._id}`).emit('message:seen', {

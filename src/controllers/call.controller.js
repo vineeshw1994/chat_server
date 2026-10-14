@@ -1,4 +1,5 @@
 import Call from '../models/Call.js';
+import Chat from '../models/Chat.js';
 import Friendship from '../models/Friendship.js';
 import { isBlockedEitherWay } from '../helpers/block.js';
 import { createNotification } from '../services/notification.service.js';
@@ -19,41 +20,72 @@ const isCallParticipant = (call, userId) =>
 
 export const initiateCall = asyncHandler(async (req, res) => {
   const { receiverId, type = 'audio', chatId = null } = req.body;
-  if (!receiverId) throw new AppError('Receiver ID is required', 400);
   if (!['audio', 'video'].includes(type)) throw new AppError('Invalid call type', 400);
 
-  const friendship = await Friendship.findOne({
-    users: { $all: [req.user._id, receiverId] },
-  });
-  if (!friendship) throw new AppError('You can only call friends', 403);
-  if (await isBlockedEitherWay(req.user._id, receiverId)) {
-    throw new AppError('Unable to call this user', 403);
+  let chat = null;
+  if (chatId) {
+    chat = await Chat.findById(chatId);
+    if (!chat || !chat.participants.some((p) => String(p) === String(req.user._id))) {
+      throw new AppError('Chat not found', 404);
+    }
+  }
+
+  let participantIds = [];
+  let primaryReceiver = receiverId;
+
+  if (chat?.type === 'group') {
+    participantIds = [...new Set(chat.participants.map(String))];
+    const others = participantIds.filter((id) => id !== String(req.user._id));
+    if (!others.length) throw new AppError('No other members to call', 400);
+    primaryReceiver = others[0];
+  } else {
+    if (!receiverId) throw new AppError('Receiver ID is required', 400);
+    const friendship = await Friendship.findOne({
+      users: { $all: [req.user._id, receiverId] },
+    });
+    if (!friendship) throw new AppError('You can only call friends', 403);
+    if (await isBlockedEitherWay(req.user._id, receiverId)) {
+      throw new AppError('Unable to call this user', 403);
+    }
+    participantIds = [String(req.user._id), String(receiverId)];
+    primaryReceiver = receiverId;
   }
 
   const call = await Call.create({
     caller: req.user._id,
-    receiver: receiverId,
-    participants: [req.user._id, receiverId],
-    chat: chatId,
+    receiver: primaryReceiver,
+    participants: participantIds,
+    chat: chat?._id || chatId || null,
     type,
     status: 'ringing',
   });
 
   const populated = await populateCall(call._id);
   const io = req.app.get('io');
-  const receiverOnline = getOnlineUsers().has(String(receiverId));
+  const onlineUsers = getOnlineUsers();
+  const others = participantIds.filter((id) => id !== String(req.user._id));
+  const receiverOnline = others.some((id) => onlineUsers.has(String(id)));
+  const isGroupCall = chat?.type === 'group';
+  const incomingPayload = {
+    ...(populated.toObject?.() || populated),
+    isGroupCall,
+  };
 
-  io?.to(`user:${receiverId}`).emit('call:incoming', populated);
-
-  await createNotification({
-    recipient: receiverId,
-    sender: req.user._id,
-    type: 'incoming_call',
-    title: `Incoming ${type} call`,
-    body: `${req.user.name} is calling you`,
-    data: { callId: call._id, type, callerId: req.user._id },
-    io,
-  });
+  for (const uid of others) {
+    io?.to(`user:${uid}`).emit('call:incoming', {
+      ...incomingPayload,
+      isGroupInvite: isGroupCall,
+    });
+    await createNotification({
+      recipient: uid,
+      sender: req.user._id,
+      type: 'incoming_call',
+      title: isGroupCall ? `Incoming group ${type} call` : `Incoming ${type} call`,
+      body: `${req.user.name} is calling you`,
+      data: { callId: call._id, type, callerId: req.user._id, chatId: chat?._id || chatId },
+      io,
+    });
+  }
 
   scheduleMissedCall(call._id, io);
 
@@ -64,7 +96,7 @@ export const initiateCall = asyncHandler(async (req, res) => {
       receiverOnline,
       message: receiverOnline
         ? 'Calling...'
-        : 'User is offline — they will be notified when back online',
+        : 'No one is online — they will be notified when back online',
     },
   });
 });

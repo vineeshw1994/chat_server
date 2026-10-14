@@ -43,6 +43,7 @@ export const searchUsers = asyncHandler(async (req, res) => {
   const users = await User.find({
     _id: { $ne: req.user._id },
     isVerified: true,
+    deletedAt: null,
     $or: [
       { email: q.toLowerCase() },
       { mobile: q },

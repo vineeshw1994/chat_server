@@ -21,7 +21,9 @@ const initSocket = (io) => {
 
       const decoded = jwt.verify(token, config.jwtSecret);
       const user = await User.findById(decoded.id);
-      if (!user || !user.isVerified) return next(new Error('Invalid user'));
+      if (!user || !user.isVerified || user.status === 'banned' || user.deletedAt) {
+        return next(new Error('Invalid user'));
+      }
 
       socket.user = user;
       next();
@@ -146,6 +148,13 @@ const initSocket = (io) => {
     });
 
     socket.on('disconnect', async () => {
+      const remaining = io.sockets.adapter.rooms.get(`user:${userId}`);
+      if (remaining && remaining.size > 0) {
+        const nextId = [...remaining][0];
+        onlineUsers.set(userId, nextId);
+        return;
+      }
+
       onlineUsers.delete(userId);
       const lastSeen = new Date();
       await User.findByIdAndUpdate(userId, {
